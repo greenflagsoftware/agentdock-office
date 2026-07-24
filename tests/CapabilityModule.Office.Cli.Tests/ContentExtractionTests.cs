@@ -307,6 +307,69 @@ public class ContentExtractionTests : IDisposable
         Assert.IsType<PdfExtractor>(extractor);
     }
 
+    // ---------------------------------------------------------------
+    // .xlsx extractor tests
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public void XlsxExtractor_ExtractsText()
+    {
+        var file = PathFor("test.xlsx");
+        using var wb = new ClosedXML.Excel.XLWorkbook();
+        var ws = wb.Worksheets.Add("Sheet1");
+        ws.Cell("A1").Value = "Name";
+        ws.Cell("B1").Value = "Role";
+        ws.Cell("A2").Value = "Alice";
+        ws.Cell("B2").Value = "Engineer";
+        wb.SaveAs(file);
+
+        var extractor = new XlsxExtractor();
+        var result = extractor.Extract(file);
+
+        Assert.Contains("Name", result.Text);
+        Assert.Contains("Alice", result.Text);
+        Assert.Contains("Engineer", result.Text);
+    }
+
+    [Fact]
+    public void XlsxExtractor_EachSheetBecomesAChapter()
+    {
+        var file = PathFor("multi-sheet.xlsx");
+        using var wb = new ClosedXML.Excel.XLWorkbook();
+        var ws1 = wb.Worksheets.Add("Sheet1");
+        ws1.Cell("A1").Value = "Data1";
+        var ws2 = wb.Worksheets.Add("Sheet2");
+        ws2.Cell("A1").Value = "Data2";
+        wb.SaveAs(file);
+
+        var extractor = new XlsxExtractor();
+        var result = extractor.Extract(file);
+
+        Assert.Equal(2, result.Chapters.Count);
+        Assert.Equal("Sheet1", result.Chapters[0].HeadingPath.FirstOrDefault());
+        Assert.Equal("Sheet2", result.Chapters[1].HeadingPath.FirstOrDefault());
+        Assert.Contains("Data1", result.Chapters[0].Text);
+        Assert.Contains("Data2", result.Chapters[1].Text);
+    }
+
+    [Fact]
+    public void XlsxExtractor_InvalidFile_Throws()
+    {
+        var file = PathFor("empty.xlsx");
+        // Create an empty file (not a valid xlsx)
+        File.WriteAllBytes(file, new byte[0]);
+
+        var extractor = new XlsxExtractor();
+        Assert.ThrowsAny<Exception>(() => extractor.Extract(file));
+    }
+
+    [Fact]
+    public void Factory_ReturnsXlsxExtractor_ForXlsxFiles()
+    {
+        var extractor = ContentExtractorFactory.GetExtractor("test.xlsx");
+        Assert.IsType<XlsxExtractor>(extractor);
+    }
+
     [Fact]
     public void Factory_UnknownExtension_Throws()
     {

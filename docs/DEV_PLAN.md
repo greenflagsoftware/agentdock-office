@@ -774,6 +774,157 @@ loads the full document preview correctly.
     verified in the browser
   - [x] `download_file` MCP tool added and declared in `module.manifest.json`
 
+### Phase 17 — Spreadsheet support (.xlsx)
+
+- Motivation: this module's Office-document coverage stops at Word (.docx) and PDF — spreadsheets
+  are explicitly out of scope so far, but Excel files are a common thing for a capability module
+  like this to be handed. This phase adds `.xlsx` as a first-class format, following the same
+  CLI-first pattern Phase 2 used for `.docx`: a new engine, a new CLI command, then MCP wiring,
+  then indexing/web-UI plumbing.
+- **Decided library: [ClosedXML](https://github.com/ClosedXML/ClosedXML) (MIT).** Raw
+  `DocumentFormat.OpenXml` (already a dependency, used by `DocxEngine`) exposes SpreadsheetML at
+  the shared-strings-table/cell-reference level, which is materially more painful to work with
+  correctly than WordprocessingML — same category of build-vs-depend call Phase 8 made for PDF
+  (`PdfPig` over hand-rolled parsing). ClosedXML wraps `DocumentFormat.OpenXml` with a cell/sheet
+  object model, is MIT-licensed, and is the de facto standard pure-.NET library for this — unlike
+  EPPlus, which moved to a commercial license for non-noncommercial use beyond v4, ClosedXML has
+  no such constraint.
+- **New `XlsxEngine`** (`src/CapabilityModule.Office.Cli/XlsxEngine.cs`), mirroring `DocxEngine`'s
+  shape:
+  - `ReadText(path)` — extracts all sheets as a plain-text representation (sheet name as a
+    section marker, rows as tab-joined cell values) for `xlsx read`/content preview, analogous to
+    `DocxEngine.ReadText`.
+  - `ReadRows(path, sheet?)` — structured row/column data (list of rows, each a list of cell
+    string values), for callers that want the grid rather than flattened text. Cell values are
+    read as their **calculated/cached value** (what Excel last saved), not live-recalculated —
+    this module does not implement a formula engine; a workbook with volatile formulas
+    (`=NOW()`, `=RAND()`) returns whatever value was cached at last save. Flag this explicitly to
+    callers via a `"hasFormulas": true` field in `info` output rather than silently returning
+    stale-looking numbers with no explanation.
+  - `Create(path, sheetName, rows)` — builds a new workbook with a single sheet (default name
+    `"Sheet1"`) from caller-supplied rows. Multi-sheet creation is explicitly deferred — v1
+    matches `docx create`'s single-document scope, not a full workbook-authoring API.
+  - `GetInfo(path)` — sheet names, row/column counts per sheet, and the `hasFormulas` flag above.
+  - `SetCell(path, sheet, cellRef, value)` — the first spreadsheet mutation primitive, analogous
+    to `docx replace`: a single targeted cell write, not a batch/range operation. Snapshots the
+    pre-edit file to the Phase 6 `VersionStore` first (same convention as `docx replace`), then
+    overwrites in place.
+- **New `xlsx` CLI command** (`src/CapabilityModule.Office.Cli/Commands/XlsxCommand.cs`), mirroring
+  `DocxCommand`'s subcommand structure: `xlsx read`, `xlsx create`, `xlsx info`, `xlsx set-cell`.
+  `read`/`create`/`info` take the same `--root` override as every other command; `create`'s row
+  data is JSON (array of arrays of strings) via `--content` or stdin, consistent with how `docx
+  create` accepts body text via `--content`/stdin.
+- **Indexing (Phase 7-11 integration):** new `XlsxExtractor`
+  (`src/CapabilityModule.Office.Cli/Extractors/XlsxExtractor.cs`) implementing `IContentExtractor`
+  (Phase 8), registered in `ContentExtractorFactory` for `.xlsx`. Each sheet becomes a chunk-
+  friendly unit (mirroring `DocxExtractor`'s per-table serialization: a sheet's rows are kept on
+  recoverable structure rather than flattened into one blob), with the sheet name surfaced as the
+  chunk's heading path — the spreadsheet analog of `DocxExtractor`'s heading stack, just one level
+  deep (sheet, not nested headings).
+- **Upload/download need no changes.** Phase 12/16's `upload`/`download` commands are already
+  binary-safe and format-agnostic — a `.xlsx` file uploads and downloads correctly today with zero
+  changes. This phase is only about *understanding* xlsx content (read/create/info/edit/index),
+  not file transport.
+- **WebApi `/view` fix (`src/CapabilityModule.Office.WebApi/Program.cs`):** today, any non-`.docx`
+  path falls through to the plain-text `read` branch — for a binary `.xlsx` file this returns
+  mangled bytes-as-text, the same class of bug Phase 16 wasn't scoped to catch because it only
+  covers `download`. Add an `isXlsx` branch that calls `xlsx read` (or a rows-returning variant)
+  instead, mirroring the existing `isDocx` branch. Response includes both the flattened text (for
+  parity with other formats) and structured rows/sheet names, so a future grid-rendering UI has
+  data to work with — but rendering an actual interactive grid in `PreviewPane` is **explicitly
+  deferred**, consistent with Phase 13/14's own precedent of shipping extracted-text preview
+  before full-fidelity rendering. This phase's frontend change, if any, is limited to not crashing
+  or showing garbage for `.xlsx` files — a monospace text dump of the extracted rows is an
+  acceptable v1, a real `<table>` grid is a follow-up.
+- Explicitly deferred: formula evaluation/recalculation (read cached values only, per above),
+  multi-sheet `create`, cell formatting/styles/charts/pivot tables (out of scope entirely — this
+  is a data-extraction and simple-edit capability, not an Excel-fidelity renderer), range/batch
+  cell edits (only single-cell `set-cell` in this phase, matching `docx replace`'s single-
+  substitution scope).
+- Exit criteria:
+  - [x] `ClosedXML` package referenced in `CapabilityModule.Office.Cli.csproj`
+  - [x] `XlsxEngine.ReadText`/`ReadRows`/`Create`/`GetInfo`/`SetCell` implemented, covered by unit
+    tests under `tests/CapabilityModule.Office.Cli.Tests/` (round-trip create → read → info,
+    analogous to `DocxEngineTests`)
+  - [x] `xlsx read`/`create`/`info`/`set-cell` CLI subcommands added, each rejecting a path outside
+    the restricted root and emitting JSON on stdout consistent with the CLI's existing contract
+  - [x] `xlsx set-cell` snapshots to the version store before overwriting, and its JSON output
+    includes the version number/path and post-write last-modified timestamp, matching `docx
+    replace`'s output shape
+  - [x] a workbook containing formulas is read without error, returns the cached calculated
+    value(s), and `xlsx info` reports `hasFormulas: true` for it
+  - [x] `XlsxExtractor` implemented and registered in `ContentExtractorFactory` for `.xlsx`;
+    `index build` successfully chunks and (with an embedding provider configured) embeds an
+    uploaded `.xlsx` file, verified via `index search` finding content from within a sheet
+  - [x] MCP tools `xlsx_read`, `xlsx_create`, `xlsx_info`, `xlsx_set_cell` wired per Phase 3's
+    pattern, `module.manifest.json` updated
+  - [x] `/view` returns readable (not mangled-binary) content for a `.xlsx` file, verified via
+    `docker compose up --build`
+  - [x] unit tests under `tests/CapabilityModule.Office.Cli.Tests/` (engine, extractor,
+    path-traversal rejection); MCP-adapter tests under `tests/CapabilityModule.Office.Tests/`;
+    WebApi test under `tests/CapabilityModule.Office.WebApi.Tests/` covering the `/view` branch
+
+### Phase 18 — CSV structured support
+
+- Motivation: `.csv` is technically already readable/writable today — it's plain text, so Phase
+  1's `read`/`write` and Phase 5's `search` all already work on it, and `ContentExtractorFactory`
+  already maps `.csv` to `PlainTextExtractor` for indexing. But that treatment is naive: a CSV is
+  tabular data (rows/columns, a header row, quoted fields that may contain embedded commas or
+  newlines), and today it's indexed and read as an undifferentiated blob of text with no row/column
+  structure recovered — the same gap `.docx`/`.xlsx` closed for their own formats via dedicated
+  extractors. This phase gives CSV the structured treatment its data shape actually has, without
+  duplicating what Phase 1's generic primitives already cover correctly.
+- **Decided library: [CsvHelper](https://github.com/JoshClose/CsvHelper) (MS-PL/Apache-2.0).**
+  Naive `string.Split(',')` (what `PlainTextExtractor` effectively does today when applied to a
+  CSV) breaks on quoted fields containing commas, embedded newlines, or escaped quotes — real CSV
+  needs an actual parser. CsvHelper is the standard, actively-maintained choice for .NET — the
+  same "pick a proven library instead of writing bespoke parsing for a format with well-known
+  edge cases" reasoning Phase 8 used for `PdfPig`.
+- **Decided: no new `csv read`/`csv write` CLI commands.** Whole-file CSV read and whole-file
+  create/overwrite/append are already fully served by Phase 1's generic `read`/`write` — CSV is
+  text, and those commands are not format-restricted for reading. Adding CSV-specific duplicates
+  of those two commands would be pure surface-area growth with no new capability. This is a
+  deliberate scope decision, not an oversight — flag before changing it.
+- **New capability actually needed: structured, single-cell access**, which the generic
+  text primitives cannot do (they only operate on the whole file):
+  - **New `CsvEngine`** (`src/CapabilityModule.Office.Cli/CsvEngine.cs`):
+    - `GetInfo(path)` — header row (if present; assume a header unless `--no-header` is passed),
+      row count, column count. Analogous to `docx info`/`xlsx info`.
+    - `SetCell(path, rowIndex, column, value)` — targeted single-cell edit by row index and
+      column name (or index when `--no-header`), addressing the same "single-cell edit, not a
+      full caller-supplied rewrite" scope Phase 6 and Phase 17 both use. Snapshots to the Phase 6
+      `VersionStore` before overwriting, same convention as `docx replace`/`xlsx set-cell`.
+  - **New `csv` CLI command** (`src/CapabilityModule.Office.Cli/Commands/CsvCommand.cs`): `csv
+    info`, `csv set-cell`. No `csv read`/`csv create` (see decision above) — `read`/`write`
+    already cover those.
+- **Indexing upgrade:** new `CsvExtractor`
+  (`src/CapabilityModule.Office.Cli/Extractors/CsvExtractor.cs`) implementing `IContentExtractor`,
+  replacing the current `PlainTextExtractor` registration for `.csv` in `ContentExtractorFactory`.
+  Uses CsvHelper to parse rows properly (respecting quoting/escaping) and produces a normalized
+  text representation with the header row surfaced as structural metadata (the CSV analog of
+  `DocxExtractor`'s heading path / `XlsxExtractor`'s sheet name), so hybrid search results from a
+  CSV can show which columns a matching row came from instead of an opaque comma-joined line.
+- Explicitly deferred: a query/filter language over CSV content (e.g. "rows where column X = Y") —
+  this phase gives single-cell addressing and structure-aware indexing, not a query engine. Revisit
+  if real usage shows `index search` isn't precise enough for tabular lookups. Multi-cell/batch
+  edits are deferred for the same reason `xlsx set-cell` stays single-cell in Phase 17.
+- Exit criteria:
+  - [ ] `CsvHelper` package referenced in `CapabilityModule.Office.Cli.csproj`
+  - [ ] `CsvEngine.GetInfo`/`SetCell` implemented, covered by unit tests under
+    `tests/CapabilityModule.Office.Cli.Tests/`, including a fixture with quoted fields containing
+    embedded commas/newlines to prove real parsing (not naive split) is in use
+  - [ ] `csv info`/`csv set-cell` CLI subcommands added, rejecting a path outside the restricted
+    root and emitting JSON on stdout consistent with the CLI's existing contract
+  - [ ] `csv set-cell` snapshots to the version store before overwriting, JSON output includes
+    version number/path and post-write last-modified timestamp, matching the Phase 6/17 shape
+  - [ ] `CsvExtractor` implemented and registered in `ContentExtractorFactory` for `.csv`,
+    replacing the `PlainTextExtractor` mapping; a re-run of `index build` against an already-
+    indexed CSV file picks up the new structure (content-hash change forces re-chunking)
+  - [ ] MCP tools `csv_info`, `csv_set_cell` wired per Phase 3's pattern, `module.manifest.json`
+    updated
+  - [ ] unit tests under `tests/CapabilityModule.Office.Cli.Tests/` (engine, extractor,
+    path-traversal rejection); MCP-adapter tests under `tests/CapabilityModule.Office.Tests/`
+
 ## Reference
 
 - Capability-module architecture decisions (sidecar-per-module, MCP over HTTP, entitlement via

@@ -192,6 +192,7 @@ app.MapGet("/view", async (string path) =>
 
     var root = ResolveRoot();
     var isDocx = path.EndsWith(".docx", StringComparison.OrdinalIgnoreCase);
+    var isXlsx = path.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase);
 
     try
     {
@@ -209,6 +210,31 @@ app.MapGet("/view", async (string path) =>
                 resolved,
                 content,
                 format = "docx"
+            });
+        }
+        else if (isXlsx)
+        {
+            var args = new List<string> { "xlsx", "read", path, "--rows", "--root", root };
+            var json = await CliRunner.RunAsync(args);
+            using var doc = JsonDocument.Parse(json);
+            var resolved = doc.RootElement.TryGetProperty("resolved", out var r) ? r.GetString() : path;
+
+            // Flattened text from ReadText for content preview
+            var textArgs = new List<string> { "xlsx", "read", path, "--root", root };
+            var textJson = await CliRunner.RunAsync(textArgs);
+            using var textDoc = JsonDocument.Parse(textJson);
+            var content = textDoc.RootElement.TryGetProperty("content", out var c) ? c.GetString() : "";
+
+            // Structured rows for a future grid UI
+            var sheets = doc.RootElement.TryGetProperty("sheets", out var s) ? s.Clone() : EmptyArray;
+
+            return Results.Ok(new
+            {
+                path,
+                resolved,
+                content,
+                sheets,
+                format = "xlsx"
             });
         }
         else

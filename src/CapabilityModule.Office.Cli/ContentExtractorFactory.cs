@@ -19,6 +19,7 @@ internal static class ContentExtractorFactory
         [".xml"] = new PlainTextExtractor(),
         [".yaml"] = new PlainTextExtractor(),
         [".yml"] = new PlainTextExtractor(),
+        [".xlsx"] = new XlsxExtractor(),
         [".pdf"] = new PdfExtractor(),
     };
 

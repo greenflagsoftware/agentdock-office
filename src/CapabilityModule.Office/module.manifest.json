@@ -2,7 +2,7 @@
   "id": "office",
   "name": "Office",
   "version": "0.1.0",
-  "description": "Office-document tools for capability modules — read, create, inspect, and search .docx files on the filesystem.",
+  "description": "Office-document tools for capability modules — read, create, inspect, search, and edit .docx, .xlsx, .pdf, and plain-text files on the filesystem.",
   "tools": [
     {
       "name": "docx_read",
@@ -19,6 +19,22 @@
     {
       "name": "docx_replace",
       "description": "Find and replace text in a .docx document. The original file is versioned before overwriting, so the previous content is recoverable. Returns the version number, version path, and last-modified timestamp."
+    },
+    {
+      "name": "xlsx_read",
+      "description": "Read the plain text content of an .xlsx spreadsheet. Returns sheet names and cell values in a flattened text format."
+    },
+    {
+      "name": "xlsx_create",
+      "description": "Create a new .xlsx workbook from row data. Rows are provided as a JSON array of arrays of strings."
+    },
+    {
+      "name": "xlsx_info",
+      "description": "Get metadata about an .xlsx workbook: sheet count, sheet names, row/column counts per sheet, and whether formulas are present."
+    },
+    {
+      "name": "xlsx_set_cell",
+      "description": "Set the value of a single cell in an .xlsx workbook. The original file is versioned before overwriting, so the previous content is recoverable."
     },
     {
       "name": "search",

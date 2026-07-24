@@ -18,6 +18,7 @@ public static class Program
             new UploadCommand().Command(),
             new DeleteCommand().Command(),
             new DownloadCommand().Command(),
+            new XlsxCommand().Command(),
         };
 
         rootCommand.SetHandler(() =>
