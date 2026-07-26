@@ -161,6 +161,45 @@ public sealed class IndexEngineTests : IAsyncLifetime
     }
 
     // ---------------------------------------------------------------
+    // Version-store exclusion (fixes #8 — a stale/corrupted snapshot
+    // under _versions/ must not fail the whole reindex)
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public async Task BuildIndexAsync_SkipsFilesUnderVersionsDirectory()
+    {
+        File.WriteAllText(PathFor("live.txt"), "This is the live document.");
+        var versionsDir = Path.Combine(_dir, "_versions");
+        Directory.CreateDirectory(versionsDir);
+        File.WriteAllText(Path.Combine(versionsDir, "live.v1.txt"), "An old snapshot of the document.");
+
+        var summary = await IndexEngine.BuildIndexAsync(_dir, _dir, _postgres.ConnectionString);
+
+        Assert.Equal(1, summary.FilesProcessed);
+        Assert.Equal(1, summary.FilesIndexed);
+        Assert.Equal(0, summary.FilesWithErrors);
+
+        var (docCount, _) = await CountRowsAsync();
+        Assert.Equal(1, docCount);
+    }
+
+    [Fact]
+    public async Task BuildIndexAsync_CorruptedFileUnderVersionsDirectory_DoesNotFailReindex()
+    {
+        DocxEngine.Create(PathFor("live.docx"), "Live", "The current, valid version.");
+        var versionsDir = Path.Combine(_dir, "_versions");
+        Directory.CreateDirectory(versionsDir);
+        File.WriteAllText(Path.Combine(versionsDir, "live.v1.docx"), "not a real docx — corrupted");
+        File.WriteAllText(PathFor("other.txt"), "an unrelated, valid document");
+
+        var summary = await IndexEngine.BuildIndexAsync(_dir, _dir, _postgres.ConnectionString);
+
+        // The corrupted _versions/live.v1.docx is skipped entirely, so it never
+        // reaches the extractor and never contributes to FilesWithErrors.
+        Assert.Equal(0, summary.FilesWithErrors);
+    }
+
+    // ---------------------------------------------------------------
     // Embedding: skip-already-embedded (Phase 10 exit criterion)
     // ---------------------------------------------------------------
 

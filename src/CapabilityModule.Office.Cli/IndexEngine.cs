@@ -38,6 +38,11 @@ internal static class IndexEngine
         foreach (var filePath in Directory.EnumerateFiles(
             directory, "*", SearchOption.AllDirectories))
         {
+            if (IsInVersionStore(root, filePath))
+            {
+                continue;
+            }
+
             var result = await IndexFileAsync(root, filePath, dataSource, embeddingProvider);
             if (result.Status == IndexStatus.Error)
             {
@@ -56,6 +61,22 @@ internal static class IndexEngine
         }
 
         return summary;
+    }
+
+    /// <summary>
+    /// True if the file lives under the root's <c>_versions/</c> directory —
+    /// pre-mutation snapshots (see <see cref="VersionStore"/>), not live
+    /// documents. These are excluded from indexing: they duplicate content
+    /// already indexed from the live file, and old/stale snapshots can be
+    /// corrupted or otherwise unextractable in ways a user has no way to fix,
+    /// which would otherwise fail every future re-index permanently.
+    /// </summary>
+    private static bool IsInVersionStore(string root, string filePath)
+    {
+        var relativePath = Path.GetRelativePath(root, filePath);
+        var firstSegment = relativePath.Split(
+            Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)[0];
+        return firstSegment == "_versions";
     }
 
     /// <summary>

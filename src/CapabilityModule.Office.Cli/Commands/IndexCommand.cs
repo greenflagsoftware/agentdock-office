@@ -75,12 +75,15 @@ internal sealed class IndexCommand
                     result[kvp.Key] = kvp.Value;
                 }
 
+                // Per-file errors (e.g. a corrupted document) are reported in the JSON
+                // summary's filesWithErrors count and on stderr above, but do not fail
+                // the command itself — a bulk directory walk that indexes everything it
+                // can and reports what it couldn't is a success, not a failure. This
+                // matters beyond the CLI: WebApi/MCP callers (CliRunner) treat any
+                // non-zero exit as a hard failure and discard the JSON body, so exiting
+                // non-zero here would turn "23 of 24 documents indexed" into "reindex
+                // failed" with no way to see the summary.
                 Console.WriteLine(JsonSerializer.Serialize(result));
-
-                if (summary.FilesWithErrors > 0)
-                {
-                    Environment.Exit(3);
-                }
             }
             catch (UnauthorizedAccessException ex)
             {
