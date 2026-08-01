@@ -57,8 +57,9 @@ export interface RawHybridSearchResponse {
 export interface ViewResponse {
   path: string;
   resolved: string;
-  content: string;
-  format: "docx" | "text";
+  content?: string;
+  format: "docx" | "text" | "pdf";
+  downloadUrl?: string;
 }
 
 export interface UploadResponse {

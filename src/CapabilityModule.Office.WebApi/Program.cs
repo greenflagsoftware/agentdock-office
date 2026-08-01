@@ -193,10 +193,29 @@ app.MapGet("/view", async (string path) =>
     var root = ResolveRoot();
     var isDocx = path.EndsWith(".docx", StringComparison.OrdinalIgnoreCase);
     var isXlsx = path.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase);
+    var isPdf = path.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase);
 
     try
     {
-        if (isDocx)
+        if (isPdf)
+        {
+            // PDF is rendered client-side via pdf.js against the raw bytes served by
+            // /download — no text extraction here, viewing a PDF is about its layout,
+            // not its extracted text (which already exists for indexing, Phase 8).
+            var args = new List<string> { "read", path, "--root", root };
+            var json = await CliRunner.RunAsync(args);
+            using var doc = JsonDocument.Parse(json);
+            var resolved = doc.RootElement.TryGetProperty("resolved", out var r) ? r.GetString() : path;
+
+            return Results.Ok(new
+            {
+                path,
+                resolved,
+                downloadUrl = $"/download?path={Uri.EscapeDataString(path)}",
+                format = "pdf"
+            });
+        }
+        else if (isDocx)
         {
             var args = new List<string> { "docx", "read", path, "--root", root };
             var json = await CliRunner.RunAsync(args);

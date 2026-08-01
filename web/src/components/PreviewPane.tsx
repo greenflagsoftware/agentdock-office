@@ -1,4 +1,5 @@
 import { downloadUrl } from "../api/client";
+import PdfViewer from "./PdfViewer";
 import type { ViewResponse } from "../types";
 
 interface PreviewPaneProps {
@@ -117,7 +118,13 @@ export default function PreviewPane({
           </button>
         </div>
       </div>
-      <div className="preview-body">{document.content || "(empty document)"}</div>
+      {document.format === "pdf" ? (
+        <div className="preview-body preview-body-pdf">
+          <PdfViewer url={document.downloadUrl || downloadUrl(document.path)} />
+        </div>
+      ) : (
+        <div className="preview-body">{document.content || "(empty document)"}</div>
+      )}
     </>
   );
 }

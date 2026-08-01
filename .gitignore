@@ -317,6 +317,7 @@ node_modules/
 
 # SPA build output
 web/dist/
+web/public/standard_fonts/
 
 # Visual Studio 6 build log
 *.plg
