@@ -925,11 +925,67 @@ loads the full document preview correctly.
   - [ ] unit tests under `tests/CapabilityModule.Office.Cli.Tests/` (engine, extractor,
     path-traversal rejection); MCP-adapter tests under `tests/CapabilityModule.Office.Tests/`
 
+### Phase 19 — PDF viewing in the web UI
+
+- Motivation: PDF has had extraction support since Phase 8 (`PdfExtractor`, used for `index
+  build`/`index search`), but there is no way to *view* a PDF from the web UI at all. Today a
+  `.pdf` path falls through `/view`'s existing `isDocx`/`isXlsx` branches into the generic
+  plain-text `read` branch, which returns the raw PDF bytes decoded as text — mangled binary,
+  the exact class of bug Phase 17 fixed for `.xlsx`. This phase gives PDF the same "don't show
+  garbage" treatment `.xlsx` got, but goes further: PDF's whole value is its visual layout, so
+  the deliverable is an actual rendered page view in the browser, not another extracted-text
+  dump.
+- Decided: render PDFs client-side in the browser using **Mozilla's `pdf.js`**
+  (`pdfjs-dist` npm package), not a server-side rasterization step. `pdf.js` renders directly
+  from the raw PDF bytes onto a `<canvas>`, so the WebApi doesn't need a new rendering
+  dependency (no headless-browser/ImageMagick/Ghostscript-class subprocess to shell out to,
+  consistent with this module's CLI-first/no-external-binary precedent from Phase 5's `search`
+  and Phase 8's PDF-library choice) — it only needs to serve the raw bytes, which
+  Phase 16's `download` command/`/download` endpoint already does.
+- **WebApi (`src/CapabilityModule.Office.WebApi/Program.cs`):** add an `isPdf` branch to
+  `/view`, mirroring the existing `isDocx`/`isXlsx` branches. Rather than returning extracted
+  text (PDF text extraction already exists for indexing but isn't the point of *viewing* a
+  PDF), the response signals `format: "pdf"` plus the existing `/download`-style byte URL the
+  frontend should fetch and hand to `pdf.js` — no new byte-serving endpoint needed since
+  `/download?path=...` (Phase 16) already streams raw bytes with the right content type.
+- **Frontend (`web/`):** add `pdfjs-dist` as a dependency; `PreviewPane` gains a PDF branch
+  that, on `format === "pdf"`, fetches the bytes from `/download` and renders the first page (at
+  minimum) to a `<canvas>` via `pdf.js`, with page-forward/back controls if the document has more
+  than one page. This is a read-only viewer — no in-browser PDF annotation/editing, consistent
+  with this module's `docx`/`xlsx` preview scope (view first, edit primitives stay CLI/API-level
+  find-and-replace or set-cell, not rich in-browser editing).
+- Explicitly deferred: PDF editing (there is no PDF write/mutation primitive in this module at
+  all, at any layer — out of scope here and not implied by this phase), text selection/search
+  within the rendered canvas, and thumbnail/multi-page-grid views. This phase is single-page-at-
+  a-time rendering with next/previous navigation, matching the "view first, richer UI later"
+  precedent from Phase 13/14 (extracted-text preview before full-fidelity rendering) — PDF is the
+  one format where "full-fidelity rendering" is now in scope precisely because pdf.js makes it
+  cheap, unlike Word/Excel layout fidelity which stays out of scope.
+- Exit criteria:
+  - [ ] `/view` gains an `isPdf` branch returning `format: "pdf"` and enough information for the
+    frontend to fetch the raw bytes (reusing the existing `/download` endpoint), rejecting a path
+    outside the restricted root consistent with every other command
+  - [ ] `pdfjs-dist` added to `web/`'s dependencies
+  - [ ] `PreviewPane` renders a selected `.pdf` document's first page to a `<canvas>`, verified in
+    the browser against a real multi-page PDF fixture
+  - [ ] page navigation (next/previous) works for a multi-page PDF
+  - [ ] a `.pdf` file no longer produces mangled-binary-as-text output anywhere in the web UI
+  - [ ] WebApi test under `tests/CapabilityModule.Office.WebApi.Tests/` covering the `/view`
+    `isPdf` branch
+
 ## Reference
 
 - Capability-module architecture decisions (sidecar-per-module, MCP over HTTP, entitlement via
   running container, module contract/manifest shape): tracked separately at the VTC level, not
   duplicated here.
+- **Known external consumer of `index_build`/`index_search`'s `path` parameter:** VTC's own dev
+  plan (Phase 19, `docs/DEVPLAN.md` in the `VTC` repo) uses `path` to scope one persona's
+  `capability-module-staff` reference documents (uploaded here via `upload_file` under
+  `personas/<staffId>/references/`) so `index_search` can be scoped per persona instead of
+  searching every uploaded document team-wide. This requires **no code change in this module** —
+  `path` already does exactly this — noted here only so a future change to `path` semantics
+  doesn't silently break that downstream scoping. Consistent with "What this module does" above:
+  this module still has no knowledge of what a "persona" is; VTC is the one making that mapping.
 - [agentic_guidance.xml](agentic_guidance.xml) — Atom feed export of the *Agentic Thinking*
   blog (agenticthinking.ai), covering agent personas, MCP tool design, tool composability, and
   the standards that make agent tools/agents usable. Consult it when designing this module's
