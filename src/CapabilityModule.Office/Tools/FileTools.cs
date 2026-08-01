@@ -57,11 +57,23 @@ public static class FileTools
     /// server, hiding the real cause.
     /// </summary>
     private static async Task<JsonDocument> CallCliAsync(IReadOnlyList<string> arguments, TimeSpan? timeout = null)
+        => ParseCliResult(await InvokeCliAsync(() => CliRunner.RunAsync(arguments, timeout)));
+
+    /// <summary>
+    /// Same contract as <see cref="CallCliAsync"/>, but pipes <paramref name="stdinInput"/> to
+    /// the CLI's stdin instead of passing it as a command-line argument — required for any
+    /// content that isn't small (a few KB), since the OS argument-list length limit means large
+    /// content passed as an argument fails before the process even starts.
+    /// </summary>
+    private static async Task<JsonDocument> CallCliWithStdinAsync(
+        IReadOnlyList<string> arguments, string stdinInput, TimeSpan? timeout = null)
+        => ParseCliResult(await InvokeCliAsync(() => CliRunner.RunAsync(arguments, stdinInput, timeout)));
+
+    private static async Task<string> InvokeCliAsync(Func<Task<string>> run)
     {
-        string json;
         try
         {
-            json = await CliRunner.RunAsync(arguments, timeout);
+            return await run();
         }
         catch (CliToolException ex)
         {
@@ -76,7 +88,10 @@ public static class FileTools
             throw new McpException(
                 $"CLI binary not found: {ex.FileName}. The module may not be deployed correctly.");
         }
+    }
 
+    private static JsonDocument ParseCliResult(string json)
+    {
         if (string.IsNullOrWhiteSpace(json))
         {
             throw new McpException(
@@ -107,14 +122,20 @@ public static class FileTools
             throw new ArgumentException("Content must not be null or empty.", nameof(contentBase64));
         }
 
-        var args = BuildArgs("upload", path, "--content-base64", contentBase64);
+        var args = BuildArgs("upload", path);
         if (!string.IsNullOrWhiteSpace(mode) && !string.Equals(mode, "create", StringComparison.OrdinalIgnoreCase))
         {
             args.Add("--mode");
             args.Add(mode!);
         }
 
-        using var doc = await CallCliAsync(args, CliRunner.DefaultTimeout);
+        // Content is piped via stdin, not passed as a --content-base64 argument — the OS
+        // argument-list length limit means any file whose base64 exceeds a few hundred KB
+        // would otherwise fail with Win32Exception "Argument list too long" before the CLI
+        // subprocess even starts. The CLI already supports this (falls back to stdin when
+        // --content-base64 is omitted); this just always uses that path instead of only
+        // doing so conditionally on the caller's side.
+        using var doc = await CallCliWithStdinAsync(args, contentBase64, CliRunner.DefaultTimeout);
 
         var root = doc.RootElement;
         var resolved = root.TryGetProperty("resolved", out var r) ? r.GetString() : path;

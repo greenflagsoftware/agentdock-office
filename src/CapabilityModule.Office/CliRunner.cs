@@ -125,8 +125,50 @@ internal static class CliRunner
         return await RunProcessAsync(process, cliPath, string.Join(' ', arguments), timeout, cancellationToken);
     }
 
+    /// <summary>
+    /// Runs the CLI with a pre-split argument list, piping <paramref name="stdinInput"/> to the
+    /// subprocess's standard input instead of passing it as a command-line argument. Use this
+    /// for any content whose size isn't bounded by a few KB — e.g. base64-encoded file bytes —
+    /// since the OS argument-list length limit (~a few hundred KB, exact value platform-
+    /// dependent) means passing large content as an argument fails with Win32Exception "Argument
+    /// list too long" instead of the process ever starting. Matches the CLI's own
+    /// content-piping contract (each command that accepts bulk content already falls back to
+    /// stdin when the corresponding flag is omitted).
+    /// </summary>
+    public static async Task<string> RunAsync(
+        IReadOnlyList<string> arguments, string stdinInput, TimeSpan? timeout = null)
+    {
+        var cliPath = ResolveCliPath();
+        var effectiveTimeout = timeout ?? DefaultTimeout;
+
+        using var cts = new CancellationTokenSource(effectiveTimeout);
+
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = cliPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                RedirectStandardInput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            },
+            EnableRaisingEvents = true,
+        };
+
+        foreach (var arg in arguments)
+        {
+            process.StartInfo.ArgumentList.Add(arg);
+        }
+
+        return await RunProcessAsync(
+            process, cliPath, string.Join(' ', arguments), effectiveTimeout, cts.Token, stdinInput);
+    }
+
     private static async Task<string> RunProcessAsync(
-        Process process, string cliPath, string arguments, TimeSpan timeout, CancellationToken cancellationToken)
+        Process process, string cliPath, string arguments, TimeSpan timeout, CancellationToken cancellationToken,
+        string? stdinInput = null)
     {
         process.Start();
 
@@ -135,6 +177,12 @@ internal static class CliRunner
             // Read stdout and stderr concurrently
             var readStdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
             var readStderr = process.StandardError.ReadToEndAsync(cancellationToken);
+
+            if (stdinInput is not null)
+            {
+                await process.StandardInput.WriteAsync(stdinInput);
+                process.StandardInput.Close();
+            }
 
             var completed = process.WaitForExit((int)timeout.TotalMilliseconds);
 
