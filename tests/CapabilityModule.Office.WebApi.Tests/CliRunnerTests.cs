@@ -55,6 +55,33 @@ public class CliRunnerTests
         Assert.Contains("timed out", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.NotEmpty(ex.CliCommand);
     }
+
+    [Fact]
+    public async Task RunAsync_WithStdin_UploadsContentTooLargeForArgumentList()
+    {
+        // Regression test for https://github.com/greenflagsoftware/capability-module-office/issues/12:
+        // passing base64 file content as a --content-base64 CLI argument fails with "Argument
+        // list too long" once the base64 exceeds the OS argument-list length limit. Piping it
+        // via stdin instead (as this overload does) must succeed for content well past that limit.
+        var root = Path.Combine(Path.GetTempPath(), "office-clirunner-tests-" + Guid.NewGuid());
+        Directory.CreateDirectory(root);
+        try
+        {
+            var bytes = new byte[1024 * 1024]; // 1 MB, base64-encodes to ~1.4 MB
+            Random.Shared.NextBytes(bytes);
+            var contentBase64 = Convert.ToBase64String(bytes);
+
+            var result = await CliRunner.RunAsync(
+                new List<string> { "upload", "large-file.bin", "--root", root }, contentBase64);
+
+            Assert.Contains("large-file.bin", result, StringComparison.OrdinalIgnoreCase);
+            Assert.True(File.Exists(Path.Combine(root, "large-file.bin")));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
 }
 
 public class CliToolExceptionTests

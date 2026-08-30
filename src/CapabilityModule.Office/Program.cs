@@ -1,8 +1,19 @@
 using CapabilityModule.Office.Database;
 using Npgsql;
 using ModelContextProtocol.AspNetCore;
+using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Host.UseSerilog((context, services, configuration) => configuration
+    .ReadFrom.Configuration(context.Configuration)
+    .ReadFrom.Services(services)
+    .Enrich.FromLogContext()
+    .Enrich.WithMachineName()
+    .Enrich.WithThreadId()
+    .Enrich.WithProperty("Module", "Office")
+    .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}")
+);
 
 // Register the Postgres data source as a singleton, configured from the
 // OFFICE_DB_CONNECTION environment variable. If the variable isn't set,
@@ -47,6 +58,8 @@ builder.Services.AddMcpServer()
     .WithToolsFromAssembly();
 
 var app = builder.Build();
+
+app.UseSerilogRequestLogging();
 
 app.MapMcp();
 

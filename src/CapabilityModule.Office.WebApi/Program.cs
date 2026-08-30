@@ -1,8 +1,19 @@
 using System.Text.Json;
 using CapabilityModule.Office.WebApi.Cli;
 using Microsoft.AspNetCore.StaticFiles;
+using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Host.UseSerilog((context, services, configuration) => configuration
+    .ReadFrom.Configuration(context.Configuration)
+    .ReadFrom.Services(services)
+    .Enrich.FromLogContext()
+    .Enrich.WithMachineName()
+    .Enrich.WithThreadId()
+    .Enrich.WithProperty("Module", "Office.WebApi")
+    .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}")
+);
 
 // Allow larger request bodies for file uploads (matches the CLI's default max upload size)
 builder.WebHost.ConfigureKestrel(options =>
@@ -11,6 +22,8 @@ builder.WebHost.ConfigureKestrel(options =>
 });
 
 var app = builder.Build();
+
+app.UseSerilogRequestLogging();
 
 // Serve the SPA's static files (production build output from wwwroot).
 // ASP.NET Core's default static files middleware looks for wwwroot under
@@ -371,14 +384,18 @@ app.MapPost("/upload", async (HttpRequest request) =>
         await file.CopyToAsync(ms);
         var contentBase64 = Convert.ToBase64String(ms.ToArray());
 
-        var args = new List<string> { "upload", path, "--content-base64", contentBase64, "--root", ResolveRoot() };
+        // Content is piped via stdin, not passed as a --content-base64 argument — the OS
+        // argument-list length limit means any file whose base64 exceeds a few hundred KB
+        // would otherwise fail with "Argument list too long" before the CLI subprocess even
+        // starts (see MCP adapter's CliRunner/FileTools for the same fix).
+        var args = new List<string> { "upload", path, "--root", ResolveRoot() };
         if (!string.Equals(mode, "create", StringComparison.OrdinalIgnoreCase))
         {
             args.Add("--mode");
             args.Add(mode);
         }
 
-        var json = await CliRunner.RunAsync(args);
+        var json = await CliRunner.RunAsync(args, contentBase64);
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 

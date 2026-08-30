@@ -11,6 +11,12 @@
     <InternalsVisibleTo Include="CapabilityModule.Office.WebApi.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Serilog.AspNetCore" Version="8.0.3" />
+    <PackageReference Include="Serilog.Enrichers.Environment" Version="3.0.1" />
+    <PackageReference Include="Serilog.Enrichers.Thread" Version="4.0.0" />
+  </ItemGroup>
+
   <!-- Reference the CLI project to trigger its build -->
   <ItemGroup>
     <ProjectReference Include="..\CapabilityModule.Office.Cli\CapabilityModule.Office.Cli.csproj">

@@ -50,8 +50,27 @@ internal static class CliRunner
         return await RunAsync(cliPath, arguments, effectiveTimeout, cts.Token);
     }
 
+    /// <summary>
+    /// Runs the CLI with a pre-split argument list, piping <paramref name="stdinInput"/> to the
+    /// subprocess's standard input instead of passing it as a command-line argument. Use this
+    /// for any content whose size isn't bounded by a few KB — e.g. base64-encoded file bytes —
+    /// since the OS argument-list length limit (~a few hundred KB, exact value platform-
+    /// dependent) means passing large content as an argument fails with "Argument list too long"
+    /// instead of the process ever starting. Matches the MCP adapter's CliRunner.
+    /// </summary>
+    public static async Task<string> RunAsync(
+        IReadOnlyList<string> arguments, string stdinInput, TimeSpan? timeout = null)
+    {
+        var cliPath = ResolveCliPath();
+        var effectiveTimeout = timeout ?? DefaultTimeout;
+
+        using var cts = new CancellationTokenSource(effectiveTimeout);
+        return await RunAsync(cliPath, arguments, effectiveTimeout, cts.Token, stdinInput);
+    }
+
     internal static async Task<string> RunAsync(
-        string cliPath, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken)
+        string cliPath, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken,
+        string? stdinInput = null)
     {
         using var process = new Process
         {
@@ -60,6 +79,7 @@ internal static class CliRunner
                 FileName = cliPath,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                RedirectStandardInput = stdinInput is not null,
                 UseShellExecute = false,
                 CreateNoWindow = true,
             },
@@ -77,6 +97,12 @@ internal static class CliRunner
         {
             var readStdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
             var readStderr = process.StandardError.ReadToEndAsync(cancellationToken);
+
+            if (stdinInput is not null)
+            {
+                await process.StandardInput.WriteAsync(stdinInput);
+                process.StandardInput.Close();
+            }
 
             var completed = process.WaitForExit((int)timeout.TotalMilliseconds);
 

@@ -31,6 +31,14 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      default: {}
+      vtc-net:
+        # VTC's CapabilityModules config points at http://office:8080 — alias this
+        # service as "office" on the shared network since the compose service key
+        # here is the generic "module" name, not renamed per module.
+        aliases:
+          - office
 
   webapi:
     build:
@@ -53,3 +61,9 @@ services:
 volumes:
   pgdata:
   office_data:
+
+# Shared network with VTC (see VTC's docker-compose.yml). Created once via
+# `docker network create vtc-net` before `docker compose up` in either repo.
+networks:
+  vtc-net:
+    external: true
